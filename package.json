@@ -1,0 +1,38 @@
+{
+	"name": "sidewize",
+	"main": "main.js",
+	"version": "1.0.0",
+	"author": "MrDexign <mrdexign@gmail.com>",
+	"description": "A sidebar application for AI Chat",
+	"homepage": "https://github.com/mrdexign/sidewize",
+	"scripts": {
+		"start": "electron .",
+		"pack": "electron-builder --dir",
+		"exe": "electron-builder --win",
+		"postinstall": "electron-builder install-app-deps"
+	},
+	"build": {
+		"appId": "com.mrdexign.sidewize",
+		"productName": "SideWize",
+		"copyright": "Copyright © 2025 MrDexign",
+		"win": {
+			"target": "nsis",
+			"icon": "icon.ico"
+		},
+		"nsis": {
+			"oneClick": false,
+			"allowToChangeInstallationDirectory": true,
+			"installerIcon": "icon.ico",
+			"uninstallerIcon": "icon.ico",
+			"createDesktopShortcut": true,
+			"createStartMenuShortcut": true
+		}
+	},
+	"devDependencies": {
+		"electron": "^36.0.0",
+		"electron-builder": "^26.0.12"
+	},
+	"dependencies": {
+		"auto-launch": "^5.0.6"
+	}
+}
