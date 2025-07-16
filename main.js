@@ -52,9 +52,13 @@ let isWindowVisible = false;
 
 const serviceUrls = {
 	deepseek: 'https://chat.deepseek.com/',
+	copilot: 'https://copilot.microsoft.com/',
 	gemini: 'https://gemini.google.com/',
 	grok: 'https://grok.com/',
 	chatgpt: 'https://chat.openai.com/',
+	chatgot: 'https://www.chatgot.io/chat',
+	monica: 'https://monica.im/',
+	sesame: 'https://app.sesame.com/',
 };
 
 const getServiceUrl = () => serviceUrls[config.chatService] || serviceUrls.deepseek;
@@ -88,10 +92,12 @@ const updateWindow = async () => {
 		height: screenHeight,
 		show: false,
 		frame: false,
+		plugins: true,
 		resizable: false,
 		transparent: false,
 		maximizable: false,
 		fullscreenable: false,
+		enableBlinkFeatures: 'AudioVideoTracks',
 		alwaysOnTop: config.isPinned,
 		icon: path.join(__dirname, 'icon.ico'),
 		webPreferences: {
@@ -107,6 +113,11 @@ const updateWindow = async () => {
 
 	await mainWindow.loadURL(getServiceUrl());
 
+	mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+		const allowedPermissions = ['media', 'microphone'];
+		callback(!!allowedPermissions.includes(permission));
+	});
+
 	mainWindow.on('closed', () => {
 		mainWindow = null;
 		isWindowVisible = false;
@@ -120,6 +131,11 @@ const updateWindow = async () => {
 	});
 
 	globalShortcut.register('Alt+G', () => toggleWindow());
+
+	globalShortcut.register('Alt+V', () => {
+		if (config.chatService === 'sesame') toggleWindow();
+		else toggleChatService('sesame');
+	});
 
 	!tray ? createTray() : updateTrayMenu();
 };
@@ -205,15 +221,6 @@ const updateTrayMenu = () => {
 			})),
 		},
 		{
-			label: 'Window Position',
-			submenu: ['left', 'right'].map(position => ({
-				label: position.charAt(0).toUpperCase() + position.slice(1),
-				type: 'radio',
-				checked: config.position === position,
-				click: () => config.position !== position && toggleWindowPosition(),
-			})),
-		},
-		{
 			label: 'Window Size',
 			submenu: [
 				{
@@ -229,6 +236,15 @@ const updateTrayMenu = () => {
 					click: () => config.widthMode !== 'full' && toggleWindowWidth(),
 				},
 			],
+		},
+		{
+			label: 'Window Position',
+			submenu: ['left', 'right'].map(position => ({
+				label: position.charAt(0).toUpperCase() + position.slice(1),
+				type: 'radio',
+				checked: config.position === position,
+				click: () => config.position !== position && toggleWindowPosition(),
+			})),
 		},
 		{ type: 'separator' },
 		{
@@ -262,6 +278,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+	globalShortcut.unregister('Alt+G');
+	globalShortcut.unregister('Alt+V');
 	globalShortcut.unregisterAll();
 	if (tray) {
 		tray.destroy();
