@@ -1,30 +1,30 @@
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs').promises;
 const AutoLaunch = require('auto-launch');
 const { app, BrowserWindow, Tray, Menu, nativeImage, globalShortcut, screen } = require('electron');
 
 //? ---------------------------- App Config ---------------------------
-
 const configPath = path.join(app.getPath('userData'), 'sidewize-config.json');
-
 const AutoLauncher = new AutoLaunch({ name: 'SideWize', path: app.getPath('exe'), isHidden: true });
-
 const defaultConfig = { position: 'left', widthMode: '35%', isPinned: true, launchAtStartup: true, chatService: 'deepseek' };
 
 const loadConfig = async () => {
 	try {
-		if (fs.existsSync(configPath)) {
-			const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+		const configExists = await fs
+			.access(configPath)
+			.then(() => true)
+			.catch(() => false);
+		if (configExists) {
+			const configData = await fs.readFile(configPath, 'utf-8');
+			const config = JSON.parse(configData);
 			const mergedConfig = { ...defaultConfig, ...config };
 
 			if (app.isPackaged) {
 				const isEnabled = await AutoLauncher.isEnabled();
 				if (mergedConfig.launchAtStartup !== isEnabled) {
-					if (mergedConfig.launchAtStartup) await AutoLauncher.enable();
-					else await AutoLauncher.disable();
+					mergedConfig.launchAtStartup ? await AutoLauncher.enable() : await AutoLauncher.disable();
 				}
 			}
-
 			return mergedConfig;
 		}
 	} catch (error) {
@@ -35,10 +35,9 @@ const loadConfig = async () => {
 
 const saveConfig = async config => {
 	try {
-		fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+		await fs.writeFile(configPath, JSON.stringify(config, null, 2));
 		if (app.isPackaged) {
-			if (config.launchAtStartup) await AutoLauncher.enable();
-			else await AutoLauncher.disable();
+			config.launchAtStartup ? await AutoLauncher.enable() : await AutoLauncher.disable();
 		}
 	} catch (error) {
 		console.error('Error saving config:', error);
@@ -46,38 +45,45 @@ const saveConfig = async config => {
 };
 
 //? ---------------------------- App ----------------------------------
-
 let config;
 let tray = null;
 let mainWindow = null;
 let isWindowVisible = false;
 
-const getServiceUrl = () => {
-	switch (config.chatService) {
-		case 'deepseek':
-			return 'https://chat.deepseek.com/';
-		case 'gemini':
-			return 'https://gemini.google.com/';
-		case 'grok':
-			return 'https://grok.com/';
-		case 'chatgpt':
-			return 'https://chat.openai.com/';
-		default:
-			return 'https://chat.deepseek.com/';
-	}
+const serviceUrls = {
+	deepseek: 'https://chat.deepseek.com/',
+	gemini: 'https://gemini.google.com/',
+	grok: 'https://grok.com/',
+	chatgpt: 'https://chat.openai.com/',
 };
 
-const updateWindow = () => {
+const getServiceUrl = () => serviceUrls[config.chatService] || serviceUrls.deepseek;
+
+const cleanupWindow = () => {
+	if (!mainWindow) return;
+
+	mainWindow.removeAllListeners();
+
+	if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+		mainWindow.webContents.removeAllListeners();
+		mainWindow.webContents.closeDevTools();
+	}
+
+	mainWindow.close();
+	mainWindow = null;
+};
+
+const updateWindow = async () => {
 	const primaryDisplay = screen.getPrimaryDisplay();
 	const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
 	const windowWidth = config.widthMode === 'full' ? screenWidth : Math.floor(screenWidth * 0.35);
 	const windowX = config.position === 'left' ? 0 : screenWidth - windowWidth;
 
-	if (mainWindow) mainWindow.close();
+	cleanupWindow();
 
 	mainWindow = new BrowserWindow({
-		y: 0,
 		x: windowX,
+		y: 0,
 		width: windowWidth,
 		height: screenHeight,
 		show: false,
@@ -99,7 +105,12 @@ const updateWindow = () => {
 		},
 	});
 
-	mainWindow.loadURL(getServiceUrl());
+	await mainWindow.loadURL(getServiceUrl());
+
+	mainWindow.on('closed', () => {
+		mainWindow = null;
+		isWindowVisible = false;
+	});
 
 	mainWindow.on('blur', () => {
 		if (mainWindow?.isVisible() && !config.isPinned) {
@@ -110,15 +121,13 @@ const updateWindow = () => {
 
 	globalShortcut.register('Alt+G', () => toggleWindow());
 
-	mainWindow?.setSize(windowWidth, screenHeight);
-
 	!tray ? createTray() : updateTrayMenu();
 };
 
 const createTray = () => {
 	const iconPath = path.join(__dirname, 'icon.ico');
-	const trayIcon = nativeImage.createFromPath(iconPath);
-	tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
+	const trayIcon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
+	tray = new Tray(trayIcon);
 	tray.setToolTip('SideWize');
 	updateTrayMenu();
 	tray.on('click', () => toggleWindow());
@@ -126,8 +135,10 @@ const createTray = () => {
 
 const toggleWindow = () => {
 	if (!mainWindow) return;
-	if (isWindowVisible) mainWindow.hide();
-	else {
+
+	if (isWindowVisible) {
+		mainWindow.hide();
+	} else {
 		mainWindow.show();
 		if (!config.isPinned) mainWindow.focus();
 	}
@@ -183,58 +194,24 @@ const updateTrayMenu = () => {
 			checked: config.isPinned,
 			click: () => togglePinWindow(),
 		},
-		{
-			type: 'separator',
-		},
+		{ type: 'separator' },
 		{
 			label: 'Chat Service',
-			submenu: [
-				{
-					label: 'DeepSeek',
-					type: 'radio',
-					checked: config.chatService === 'deepseek',
-					click: () => toggleChatService('deepseek'),
-				},
-				{
-					label: 'Google Gemini',
-					type: 'radio',
-					checked: config.chatService === 'gemini',
-					click: () => toggleChatService('gemini'),
-				},
-				{
-					label: 'Grok',
-					type: 'radio',
-					checked: config.chatService === 'grok',
-					click: () => toggleChatService('grok'),
-				},
-				{
-					label: 'ChatGPT',
-					type: 'radio',
-					checked: config.chatService === 'chatgpt',
-					click: () => toggleChatService('chatgpt'),
-				},
-			],
+			submenu: Object.keys(serviceUrls).map(service => ({
+				label: service.charAt(0).toUpperCase() + service.slice(1),
+				type: 'radio',
+				checked: config.chatService === service,
+				click: () => toggleChatService(service),
+			})),
 		},
 		{
 			label: 'Window Position',
-			submenu: [
-				{
-					label: 'Left',
-					type: 'radio',
-					checked: config.position === 'left',
-					click: () => {
-						if (config.position !== 'left') toggleWindowPosition();
-					},
-				},
-				{
-					label: 'Right',
-					type: 'radio',
-					checked: config.position === 'right',
-					click: () => {
-						if (config.position !== 'right') toggleWindowPosition();
-					},
-				},
-			],
+			submenu: ['left', 'right'].map(position => ({
+				label: position.charAt(0).toUpperCase() + position.slice(1),
+				type: 'radio',
+				checked: config.position === position,
+				click: () => config.position !== position && toggleWindowPosition(),
+			})),
 		},
 		{
 			label: 'Window Size',
@@ -243,23 +220,17 @@ const updateTrayMenu = () => {
 					label: 'Side',
 					type: 'radio',
 					checked: config.widthMode === '35%',
-					click: () => {
-						if (config.widthMode !== '35%') toggleWindowWidth();
-					},
+					click: () => config.widthMode !== '35%' && toggleWindowWidth(),
 				},
 				{
 					label: 'Full',
 					type: 'radio',
 					checked: config.widthMode === 'full',
-					click: () => {
-						if (config.widthMode !== 'full') toggleWindowWidth();
-					},
+					click: () => config.widthMode !== 'full' && toggleWindowWidth(),
 				},
 			],
 		},
-		{
-			type: 'separator',
-		},
+		{ type: 'separator' },
 		{
 			label: 'Launch at Startup',
 			type: 'checkbox',
@@ -277,10 +248,26 @@ const updateTrayMenu = () => {
 
 app.whenReady().then(async () => {
 	config = await loadConfig();
-	updateWindow();
-	app.on('activate', () => !BrowserWindow.getAllWindows().length && updateWindow());
+	await updateWindow();
+
+	app.on('activate', () => {
+		if (!BrowserWindow.getAllWindows().length) {
+			updateWindow();
+		}
+	});
 });
 
-app.on('window-all-closed', () => process.platform !== 'darwin' && app.quit());
+app.on('window-all-closed', () => {
+	if (process.platform !== 'darwin') app.quit();
+});
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+	globalShortcut.unregisterAll();
+	if (tray) {
+		tray.destroy();
+		tray = null;
+	}
+	cleanupWindow();
+});
+
+process.on('exit', () => cleanupWindow());
